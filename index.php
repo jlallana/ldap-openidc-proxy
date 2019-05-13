@@ -1,7 +1,30 @@
 <?php
 
+
+function config() {
+    $inifile = parse_ini_file('config.ini', true);
+    
+    return array(
+        'ldap' => array(
+            'hostname' => $inifile['server']['hostname'],
+            'userdn' => $inifile['server']['dn'],
+            'userid' => $inifile['server']['sub'],
+            'name' => $inifile['server']['name'],
+            'email' => $inifile['server']['email']
+        ),
+        'clients' => array(
+            $inifile['client']['client_id'] => array(
+                'redirect_uri' => $inifile['client']['valid_redirect_uri'],
+                'client_secret' => $inifile['client']['client_secret']
+            )
+        )
+    );
+
+}
+
+
 if($_SERVER['REQUEST_METHOD'] == 'POST') {
-    require 'config.php';
+    $config = config();
 
     $client = $config['clients'][$_POST['client_id']];
     
@@ -40,11 +63,11 @@ if($_SERVER['REQUEST_METHOD'] == 'POST') {
     header("Context-Type: application/json");
     echo $result;
 } else {
-    require 'config.php';
+    $config = config();
 
     $client = $config['clients'][$_GET['client_id']];
     
-    if(!$client or $client['redirect_uri'] != $_GET['redirect_uri']) {
+    if(!$client or preg_match($client['redirect_uri'] , $_GET['redirect_uri'])) {
         http_response_code(400);
         header("Content-Type: text/plain");
         echo "Invalid 'client_id' or 'redirect_uri'";
@@ -75,7 +98,7 @@ if($_SERVER['REQUEST_METHOD'] == 'POST') {
     
     function ldap_login($username, $password) {
         
-        require 'config.php';
+        $config = config();
     
         $ldap = ldap_connect($config['ldap']['hostname']);
         
@@ -126,7 +149,7 @@ if($_SERVER['REQUEST_METHOD'] == 'POST') {
     
     
     if($code = login($_SERVER['PHP_AUTH_USER'], $_SERVER['PHP_AUTH_PW'])) {
-        require 'config.php';
+        $config = config();
     
         header('location: '. $_GET['redirect_uri']. '?state=' . $_GET['state'] . '&code='.  $code);
     } else {
