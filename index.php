@@ -1,6 +1,41 @@
 <?php
 
 
+/**
+ * generates a 32 bytes random hexadecimal for code workflow
+ **/
+function generate_random_hexadecimal_code() {
+    return bin2hex(openssl_random_pseudo_bytes(32));
+}
+
+/**
+ * variant of base64 for jwt encoding
+ **/
+function jwt_base64_encode($data) {
+    return str_replace(array('+', '/', '='), array('-', '_', ''), base64_encode($data));
+}
+
+function jwt_json_encode($data) {
+    return jwt_base64_encode(json_encode($data));
+}
+
+function jwt_encode($header, $payload) {
+    return jwt_base64_encode($header) . '.' . jwt_json_encode($payload) . '.';
+}
+
+function jwt_unsigned_encode($payload) {
+    $header = array('typ' => 'JWT', 'alg' => 'none');
+    return jwt_encode($header, $payload);
+}
+
+function oidc_generate_token_response($access_token, $id_token) {
+    return json_encode(array(
+        'access_token' => $access_token,
+        'id_token' => jwt_unsigned_encode($id_token)
+    ));
+}
+
+
 function config() {
     $inifile = parse_ini_file('config.ini', true);
     
@@ -10,7 +45,7 @@ function config() {
             'userdn' => $inifile['server']['dn'],
             'userid' => $inifile['server']['sub'],
             'name' => $inifile['server']['name'],
-            'email' => $inifile['server']['email']
+            'email' => $inifile['ser ver']['email']
         ),
         'clients' => array(
             $inifile['client']['client_id'] => array(
@@ -60,6 +95,8 @@ if($_SERVER['REQUEST_METHOD'] == 'POST') {
     $result = file_get_contents($filename);
     unlink($filename);
     
+    @rmdir("tokens");
+    
     header("Context-Type: application/json");
     echo $result;
 } else {
@@ -78,22 +115,7 @@ if($_SERVER['REQUEST_METHOD'] == 'POST') {
         return bin2hex(openssl_random_pseudo_bytes(24));
     }
     
-    function jwt_binary_encode($data) {
-        return str_replace(array('+', '/', '='), array('-', '_', ''), base64_encode($data));
-    }
-    
-    function jwt_encode($payload) {
-        $header = jwt_binary_encode(json_encode(array(
-            "typ" => "JWT",
-            "alg" => "none"
-        )));
-        
-        $payload = jwt_binary_encode(json_encode($payload));
-        
-        $body = "$header.$payload";
-    
-        return "$body.";
-    }
+  
     
     
     function ldap_login($username, $password) {
@@ -131,14 +153,15 @@ if($_SERVER['REQUEST_METHOD'] == 'POST') {
         }
         
         $token = generate_code();
-        $json = json_encode(array(
-            'access_token' => md5($token),
-            'id_token' => jwt_encode(array(
+        
+        $json = oidc_generate_token_response(
+            $token,
+            array(
                 "sub" => $entries[0]['uid'][0],
                 "name" => $entries[0]['cn'][0],
                 "email" => $entries[0]['mail'][0]
-            ))
-        ));
+            )
+        );
     
         @mkdir('tokens');
         
