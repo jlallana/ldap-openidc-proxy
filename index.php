@@ -234,8 +234,8 @@ function process_token_page($client_id, $client_secret, $grant_type, $code) {
 function process_discovery_page($base_url) {
     write_json_response(array(
         'issuer' => $base_url,
-        'authorization_endpoint' => "$base_url/api/oauth/v2/auth",
-        'token_endpoint' => "$base_url/api/oauth/v2/token",
+        'authorization_endpoint' => "$base_url",
+        'token_endpoint' => "$base_url",
         'response_types_supported' => array("code"),
         'id_token_signing_alg_values_supported' => array('none'),
         'scopes_supported' => array('openid'),
@@ -251,14 +251,14 @@ function request_path() {
 }
 
 function main() {
-    if(request_path() == '/api/oauth/v2/token' and request_method() == 'post') {
+    if(request_path() == '/' and request_method() == 'post') {
         process_token_page(
             $_POST['client_id'],
             $_POST['client_secret'],
             $_POST['grant_type'],
             $_POST['code']
         );
-    } else if(request_path() == '/api/oauth/v2/auth' and request_method() == 'get') {
+    } else if(request_path() == '/' and request_method() == 'get') {
         
         process_authentication_page(
             $_GET['redirect_uri'],
@@ -272,6 +272,9 @@ function main() {
     } else if(request_path() == '/.well-known/openid-configuration' and request_method() == 'get') {
         process_discovery_page(get_request_base_url());
     } else {
+        
+        var_dump(request_path()); exit;
+        
         throw_not_found();
     }
 }
