@@ -139,7 +139,6 @@ function request_method_is_post() {
     return $_SERVER['REQUEST_METHOD'] == 'POST';
 }
 
-
 function config() {
     $inifile = parse_ini_file('config.ini', true);
     
@@ -202,9 +201,9 @@ function main() {
         $response = oidc_generate_token_response(
             $token,
             array(
-                "sub" => $entries[0]['uid'][0],
-                "name" => $entries[0]['cn'][0],
-                "email" => $entries[0]['mail'][0]
+                "sub" => $ldap_user[0]['uid'][0],
+                "name" => $ldap_user[0]['cn'][0],
+                "email" => $ldap_user[0]['mail'][0]
             )
         );
 
