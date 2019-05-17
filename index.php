@@ -83,6 +83,12 @@ function throw_client_error($message) {
     die;
 }
 
+function throw_not_found() {
+    http_response_code(404);
+    header("Content-Type: text/plain");
+    die;
+}
+
 function ldap_login($hostname, $dn, $uid,  $username, $password) {
     if(!username_is_valid($username)) {
         return false;
@@ -134,8 +140,12 @@ function redirect_to($url) {
     header("Location: $url");
 }
 
-function request_method_is_post() {
-    return $_SERVER['REQUEST_METHOD'] == 'POST';
+function request_method() {
+    return strtolower($_SERVER['REQUEST_METHOD']);
+}
+
+function get_request_base_url() {
+    return $_SERVER['REQUEST_SCHEME'] . '://' . $_SERVER['HTTP_HOST'];
 }
 
 function config() {
@@ -152,8 +162,17 @@ function openid_signin_ok($redirect_uri, $code, $state) {
     redirect_to(add_url_query_string($redirect_uri, array('state' => $state, 'code' => $code)));
 }
 
-function process_authentication_page($redirect_uri, $client_id, $state, $auth_user, $auth_pw) {
+function process_authentication_page($redirect_uri, $client_id, $response_type, $scope, $state, $auth_user, $auth_pw) {
     $config = config();
+    
+    if($response_type != 'code') {
+        throw_client_error("Invalid 'response_type'");
+    }
+    
+    if($scope != 'openid') {
+        throw_client_error("Invalid 'scope'");
+    }
+    
     
     if($config->client->client_id != $client_id or preg_match($config->client->valid_redirect_uri, $redirect_uri)) {
         throw_client_error("Invalid 'client_id' or 'redirect_uri'");
@@ -212,22 +231,48 @@ function process_token_page($client_id, $client_secret, $grant_type, $code) {
     }
 }
 
+function process_discovery_page($base_url) {
+    write_json_response(array(
+        'issuer' => $base_url,
+        'authorization_endpoint' => "$base_url/api/oauth/v2/auth",
+        'token_endpoint' => "$base_url/api/oauth/v2/token",
+        'response_types_supported' => array("code"),
+        'id_token_signing_alg_values_supported' => array('none'),
+        'scopes_supported' => array('openid'),
+        'token_endpoint_auth_methods_supported' => array('client_secret_post'),
+        'claims_supported' => array('sub', 'name', 'email'),
+        'code_challenge_methods_supported' => array('plain')
+    ));
+}
+
+
+function request_path() {
+    return isset($_SERVER["REDIRECT_URL"]) ? $_SERVER["REDIRECT_URL"] : '/';
+}
+
 function main() {
-    if(request_method_is_post()) {
+    if(request_path() == '/api/oauth/v2/token' and request_method() == 'post') {
         process_token_page(
             $_POST['client_id'],
             $_POST['client_secret'],
             $_POST['grant_type'],
             $_POST['code']
         );
-    } else {
+    } else if(request_path() == '/api/oauth/v2/auth' and request_method() == 'get') {
+        
         process_authentication_page(
             $_GET['redirect_uri'],
             $_GET['client_id'],
+            $_GET['response_type'],
+            $_GET['scope'],
             $_GET['state'],
             $_SERVER['PHP_AUTH_USER'],
             $_SERVER['PHP_AUTH_PW']
         );
+    } else if(request_path() == '/.well-known/openid-configuration' and request_method() == 'get') {
+        process_discovery_page(get_request_base_url());
+    } else {
+        throw_not_found();
     }
 }
 
