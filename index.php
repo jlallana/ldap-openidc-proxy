@@ -15,19 +15,31 @@ function jwt_base64_encode($data) {
     return str_replace(array('+', '/', '='), array('-', '_', ''), base64_encode($data));
 }
 
+/**
+ * encode json in custom base64 encoding
+ **/
 function jwt_json_encode($data) {
     return jwt_base64_encode(json_encode($data));
 }
 
+/**
+ * encode a json web token with header and payload
+ **/
 function jwt_encode($header, $payload) {
     return jwt_base64_encode($header) . '.' . jwt_json_encode($payload) . '.';
 }
 
+/**
+ * encode a json web token with none crypt algorigth
+ **/
 function jwt_unsigned_encode($payload) {
     $header = array('typ' => 'JWT', 'alg' => 'none');
     return jwt_encode($header, $payload);
 }
 
+/**
+ * generate an openid response for a valor authentication
+ **/
 function oidc_generate_token_response($access_token, $id_token) {
     return json_encode(array(
         'access_token' => $access_token,
@@ -35,10 +47,27 @@ function oidc_generate_token_response($access_token, $id_token) {
     ));
 }
 
+/**
+ * get temporary sotrage directory for session tokens by code unique by application
+ **/
 function get_token_storage_dir() {
     return sys_get_temp_dir() . '/' . md5(__FILE__);
 }
 
+/**
+ *  Authenticaes in ldap server on the specified server and dn
+ **/
+function ldap_login($hostname, $dn, $uid,  $username, $password) {
+    $ldap = ldap_connect($hostname);
+    ldap_set_option($ldap, LDAP_OPT_PROTOCOL_VERSION, 3);
+    $bind = @ldap_bind($ldap, "$uid=$username,$dn", $password);
+    if(!$bind) {
+        return false;
+    }
+    $result = ldap_read($ldap, "$uid=$username,$dn", "($uid=$username)");
+    $entries = ldap_get_entries($ldap, $result);
+    return $entries;
+}
 
 
 function config() {
@@ -61,22 +90,6 @@ function config() {
     );
 }
 
-function ldap_login($hostname, $dn, $uid,  $username, $password) {
-
-        $ldap = ldap_connect($hostname);
-        ldap_set_option($ldap, LDAP_OPT_PROTOCOL_VERSION, 3);
-
-        $bind = @ldap_bind($ldap, "$uid=$username,$dn", $password);
-    
-        if(!$bind) {
-            return false;
-        }
-        
-        
-        $result = ldap_read($ldap, "$uid=$username,$dn", "($uid=$username)");
-        $entries = ldap_get_entries($ldap, $result);
-        return $entries;
-}
 
 
 if($_SERVER['REQUEST_METHOD'] == 'POST') {
@@ -135,31 +148,9 @@ if($_SERVER['REQUEST_METHOD'] == 'POST') {
     function generate_code() {
         return bin2hex(openssl_random_pseudo_bytes(24));
     }
-    
-  
-    
-    
-    function ldap_login($username, $password) {
-        
-        $config = config();
-    
-        $ldap = ldap_connect($config['ldap']['hostname']);
-        
-        ldap_set_option($ldap, LDAP_OPT_PROTOCOL_VERSION, 3);
-        
-        $dn = $config['ldap']['userdn'];
-        $uid = $config['ldap']['userid'];
-        
-        $bind = @ldap_bind($ldap, "$uid=$username,$dn", $password);
-    
-        if(!$bind) {
-            return false;
-        }
-        
-        
-        $result = ldap_read($ldap, "$uid=$username,$dn", "($uid=$username)");
-        $entries = ldap_get_entries($ldap, $result);
-        return $entries;
+
+    function ldap_login_configured($username, $password) {
+        return ldap_login($config['ldap']['hostname'], $config['ldap']['userdn'], $config['ldap']['userid'], $username, $password);
     }
     
     function login($username, $password) {
@@ -167,7 +158,7 @@ if($_SERVER['REQUEST_METHOD'] == 'POST') {
             return false;
         }
         
-        $entries = ldap_login($username, $password);
+        $entries = ldap_login_configured($username, $password);
         
         if(!$entries) {
             return false;
