@@ -93,6 +93,9 @@ function throw_client_error($message) {
 }
 
 function ldap_login($hostname, $dn, $uid,  $username, $password) {
+    if(!username_is_valid($username)) {
+        return false;
+    }
     $ldap = ldap_connect($hostname);
     ldap_set_option($ldap, LDAP_OPT_PROTOCOL_VERSION, 3);
     $bind = @ldap_bind($ldap, "$uid=$username,$dn", $password);
@@ -120,9 +123,22 @@ function require_http_authentication() {
     echo 'HTTP/1.0 401 Unauthorized';
 }
 
+function username_is_valid($username) {
+    return ctype_alpha($username);
+}
+
+function add_url_query_string($url, $variables) {
+    return $url . '?' . http_build_query($variables);
+}
+
 function redirect_to($url) {
     header("Location: $url");
 }
+
+function request_method_is_post() {
+    return $_SERVER['REQUEST_METHOD'] == 'POST';
+}
+
 
 function config() {
     $inifile = parse_ini_file('config.ini', true);
@@ -145,67 +161,63 @@ function config() {
 }
 
 
-
-if($_SERVER['REQUEST_METHOD'] == 'POST') {
+function main() {
     $config = config();
+    
+    if(request_method_is_post()) {
 
-    $client = $config['clients'][$_POST['client_id']];
-    
-    if(!$client or $client['client_secret'] != $_POST['client_secret'] ) {
-        throw_client_error("Invalid 'client_id' or 'client_secret'");
-    }
-    
-    clear_expired_objects();
-    if(($response = pop_storage_object($_POST['code'])) != null) {
-        write_json_response($response);
-    } else {
-        throw_client_error("Invalid code");
-    }
-} else {
-    $config = config();
-
-    $client = $config['clients'][$_GET['client_id']];
-    
-    if(!$client or preg_match($client['redirect_uri'] , $_GET['redirect_uri'])) {
-        throw_client_error("Invalid 'client_id' or 'redirect_uri'");
-    }
-    
-    function ldap_login_configured($username, $password) {
+        $client = $config['clients'][$_POST['client_id']];
         
-        $config = config();
-        
-        return ldap_login($config['ldap']['hostname'], $config['ldap']['userdn'], $config['ldap']['userid'], $username, $password);
-    }
-    
-    function login($username, $password) {
-        if(!ctype_alpha($username)) {
-            return false;
+        if(!$client or $client['client_secret'] != $_POST['client_secret'] ) {
+            throw_client_error("Invalid 'client_id' or 'client_secret'");
         }
         
-        $entries = ldap_login_configured($username, $password);
+        clear_expired_objects();
         
-        if(!$entries) {
-            return false;
+        if(($response = pop_storage_object($_POST['code'])) != null) {
+            write_json_response($response);
+        } else {
+            throw_client_error("Invalid code");
+        }
+    } else {
+
+        $client = $config['clients'][$_GET['client_id']];
+        
+        if(!$client or preg_match($client['redirect_uri'] , $_GET['redirect_uri'])) {
+            throw_client_error("Invalid 'client_id' or 'redirect_uri'");
         }
         
-        $response = oidc_generate_token_response(
-            $token,
-            array(
-                "sub" => $entries[0]['uid'][0],
-                "name" => $entries[0]['cn'][0],
-                "email" => $entries[0]['mail'][0]
-            )
-        );
+        $ldap_login_configured = function($username, $password) use ($config) {
+            
+            return ldap_login($config['ldap']['hostname'], $config['ldap']['userdn'], $config['ldap']['userid'], $username, $password);
+        };
         
-        return create_storage_object($response);
-    }
+        $login = function($username, $password) use($config) {
     
+            $entries = ldap_login_configured($username, $password);
+            
+            if(!$entries) {
+                return false;
+            }
+            
+            $response = oidc_generate_token_response(
+                $token,
+                array(
+                    "sub" => $entries[0]['uid'][0],
+                    "name" => $entries[0]['cn'][0],
+                    "email" => $entries[0]['mail'][0]
+                )
+            );
+            
+            return create_storage_object($response);
+        };
     
-    if($code = login($_SERVER['PHP_AUTH_USER'], $_SERVER['PHP_AUTH_PW'])) {
-        $config = config();
-    
-        redirect_to($_GET['redirect_uri']. '?state=' . $_GET['state'] . '&code='.  $code);
-    } else {
-        require_http_authentication();
+        if($code = $login($_SERVER['PHP_AUTH_USER'], $_SERVER['PHP_AUTH_PW'])) {
+            redirect_to(add_url_query_string($_GET['redirect_uri'], array('state' => $_GET['state'], 'code' => $code)));
+        } else {
+            require_http_authentication();
+        }
     }
 }
+
+main();
