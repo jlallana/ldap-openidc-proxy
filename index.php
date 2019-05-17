@@ -35,6 +35,11 @@ function oidc_generate_token_response($access_token, $id_token) {
     ));
 }
 
+function get_token_storage_dir() {
+    return sys_get_temp_dir() . '/' . md5(__FILE__);
+}
+
+
 
 function config() {
     $inifile = parse_ini_file('config.ini', true);
@@ -54,7 +59,23 @@ function config() {
             )
         )
     );
+}
 
+function ldap_login($hostname, $dn, $uid,  $username, $password) {
+
+        $ldap = ldap_connect($hostname);
+        ldap_set_option($ldap, LDAP_OPT_PROTOCOL_VERSION, 3);
+
+        $bind = @ldap_bind($ldap, "$uid=$username,$dn", $password);
+    
+        if(!$bind) {
+            return false;
+        }
+        
+        
+        $result = ldap_read($ldap, "$uid=$username,$dn", "($uid=$username)");
+        $entries = ldap_get_entries($ldap, $result);
+        return $entries;
 }
 
 
@@ -72,7 +93,7 @@ if($_SERVER['REQUEST_METHOD'] == 'POST') {
     
     }
     
-    foreach(glob('tokens/*') as $token) {
+    foreach(glob(get_token_storage_dir() . '/*') as $token) {
         if((time() - filectime($token)) > 60) {
             unlink($token);
         }
@@ -86,7 +107,7 @@ if($_SERVER['REQUEST_METHOD'] == 'POST') {
         return;
     }
     
-    $filename = "tokens/$code.json";
+    $filename = get_token_storage_dir() . "/$code.json";
     
     if(!file_exists($filename)) {
         return;
@@ -95,7 +116,7 @@ if($_SERVER['REQUEST_METHOD'] == 'POST') {
     $result = file_get_contents($filename);
     unlink($filename);
     
-    @rmdir("tokens");
+    @rmdir(get_token_storage_dir());
     
     header("Context-Type: application/json");
     echo $result;
@@ -163,9 +184,9 @@ if($_SERVER['REQUEST_METHOD'] == 'POST') {
             )
         );
     
-        @mkdir('tokens');
+        @mkdir(get_token_storage_dir());
         
-        file_put_contents("tokens/$token.json", $json);
+        file_put_contents(get_token_storage_dir()  .  "/$token.json", $json);
         
         return $token;
     }
