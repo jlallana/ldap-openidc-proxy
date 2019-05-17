@@ -192,9 +192,9 @@ function main() {
             return ldap_login($config['ldap']['hostname'], $config['ldap']['userdn'], $config['ldap']['userid'], $username, $password);
         };
         
-        $login = function($username, $password) use($config) {
+        $login = function($username, $password) use($config, $ldap_login_configured) {
     
-            $entries = ldap_login_configured($username, $password);
+            $entries = $ldap_login_configured($username, $password);
             
             if(!$entries) {
                 return false;
