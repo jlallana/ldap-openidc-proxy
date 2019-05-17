@@ -150,6 +150,9 @@ if($_SERVER['REQUEST_METHOD'] == 'POST') {
     }
 
     function ldap_login_configured($username, $password) {
+        
+        $config = config();
+        
         return ldap_login($config['ldap']['hostname'], $config['ldap']['userdn'], $config['ldap']['userid'], $username, $password);
     }
     
