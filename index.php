@@ -141,33 +141,19 @@ function request_method_is_post() {
 
 function config() {
     $inifile = parse_ini_file('config.ini', true);
-    
-    return array(
-        'ldap' => array(
-            'hostname' => $inifile['server']['hostname'],
-            'userdn' => $inifile['server']['dn'],
-            'userid' => $inifile['server']['sub'],
-            'name' => $inifile['server']['name'],
-            'email' => $inifile['ser ver']['email']
-        ),
-        'clients' => array(
-            $inifile['client']['client_id'] => array(
-                'redirect_uri' => $inifile['client']['valid_redirect_uri'],
-                'client_secret' => $inifile['client']['client_secret']
-            )
-        )
-    );
-}
 
+    foreach($inifile as $key => $value) {
+        $inifile[$key] = (object) $value;
+    }
+    
+    return (object) $inifile;
+}
 
 function main() {
     $config = config();
-    
     if(request_method_is_post()) {
 
-        $client = $config['clients'][$_POST['client_id']];
-        
-        if(!$client or $client['client_secret'] != $_POST['client_secret'] ) {
+        if($_POST['client_id'] != $config->client->client_id and $_POST['client_secret'] != $config->client->client_secret) {
             throw_client_error("Invalid 'client_id' or 'client_secret'");
         }
         
@@ -179,17 +165,14 @@ function main() {
             throw_client_error("Invalid code");
         }
     } else {
-
-        $client = $config['clients'][$_GET['client_id']];
-        
-        if(!$client or preg_match($client['redirect_uri'] , $_GET['redirect_uri'])) {
+        if($_GET['client_id'] != $config->client->client_id or preg_match($config->client->redirect_uri, $_GET['redirect_uri'])) {
             throw_client_error("Invalid 'client_id' or 'redirect_uri'");
         }
         
         $ldap_user = ldap_login(
-            $config['ldap']['hostname'],
-            $config['ldap']['userdn'],
-            $config['ldap']['userid'],
+            $config->server->hostname,
+            $config->server->dn,
+            $config->server->sub,
             $_SERVER['PHP_AUTH_USER'],
             $_SERVER['PHP_AUTH_PW']
         );
@@ -201,9 +184,9 @@ function main() {
         $response = oidc_generate_token_response(
             $token,
             array(
-                "sub" => $ldap_user[0]['uid'][0],
-                "name" => $ldap_user[0]['cn'][0],
-                "email" => $ldap_user[0]['mail'][0]
+                "sub" => $ldap_user[0][$config->server->sub][0],
+                "name" => $ldap_user[0][$config->server->name][0],
+                "email" => $ldap_user[0][$config->server->email][0]
             )
         );
 
