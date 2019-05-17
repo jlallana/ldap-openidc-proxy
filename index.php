@@ -187,36 +187,30 @@ function main() {
             throw_client_error("Invalid 'client_id' or 'redirect_uri'");
         }
         
-        $ldap_login_configured = function($username, $password) use ($config) {
-            
-            return ldap_login($config['ldap']['hostname'], $config['ldap']['userdn'], $config['ldap']['userid'], $username, $password);
-        };
+        $ldap_user = ldap_login(
+            $config['ldap']['hostname'],
+            $config['ldap']['userdn'],
+            $config['ldap']['userid'],
+            $_SERVER['PHP_AUTH_USER'],
+            $_SERVER['PHP_AUTH_PW']
+        );
         
-        $login = function($username, $password) use($config, $ldap_login_configured) {
-    
-            $entries = $ldap_login_configured($username, $password);
-            
-            if(!$entries) {
-                return false;
-            }
-            
-            $response = oidc_generate_token_response(
-                $token,
-                array(
-                    "sub" => $entries[0]['uid'][0],
-                    "name" => $entries[0]['cn'][0],
-                    "email" => $entries[0]['mail'][0]
-                )
-            );
-            
-            return create_storage_object($response);
-        };
-    
-        if($code = $login($_SERVER['PHP_AUTH_USER'], $_SERVER['PHP_AUTH_PW'])) {
-            redirect_to(add_url_query_string($_GET['redirect_uri'], array('state' => $_GET['state'], 'code' => $code)));
-        } else {
+        if(!$ldap_user) {
             require_http_authentication();
         }
+        
+        $response = oidc_generate_token_response(
+            $token,
+            array(
+                "sub" => $entries[0]['uid'][0],
+                "name" => $entries[0]['cn'][0],
+                "email" => $entries[0]['mail'][0]
+            )
+        );
+
+        $code = create_storage_object($response);
+
+        redirect_to(add_url_query_string($_GET['redirect_uri'], array('state' => $_GET['state'], 'code' => $code)));
     }
 }
 
