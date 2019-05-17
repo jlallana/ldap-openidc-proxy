@@ -1,62 +1,97 @@
 <?php
 
-
-/**
- * generates a 32 bytes random hexadecimal for code workflow
- **/
 function generate_random_hexadecimal_code() {
     return bin2hex(openssl_random_pseudo_bytes(32));
 }
 
-/**
- * variant of base64 for jwt encoding
- **/
 function jwt_base64_encode($data) {
     return str_replace(array('+', '/', '='), array('-', '_', ''), base64_encode($data));
 }
 
-/**
- * encode json in custom base64 encoding
- **/
 function jwt_json_encode($data) {
     return jwt_base64_encode(json_encode($data));
 }
 
-/**
- * encode a json web token with header and payload
- **/
 function jwt_encode($header, $payload) {
     return jwt_base64_encode($header) . '.' . jwt_json_encode($payload) . '.';
 }
 
-/**
- * encode a json web token with none crypt algorigth
- **/
 function jwt_unsigned_encode($payload) {
     $header = array('typ' => 'JWT', 'alg' => 'none');
     return jwt_encode($header, $payload);
 }
 
-/**
- * generate an openid response for a valor authentication
- **/
 function oidc_generate_token_response($access_token, $id_token) {
-    return json_encode(array(
+    return array(
         'access_token' => $access_token,
         'id_token' => jwt_unsigned_encode($id_token)
-    ));
+    );
 }
 
-/**
- * get temporary sotrage directory for session tokens by code unique by application
- **/
-function get_token_storage_dir() {
+function get_storage_dir() {
     return sys_get_temp_dir() . '/' . md5(__FILE__);
 }
 
-/**
- *  Authenticaes in ldap server on the specified server and dn
- **/
+function save_storage_object($code, $response) {
+    @mkdir(get_storage_dir());
+    file_put_contents(get_storage_dir()  .  "/$code", json_encode($response));
+}
+
+function create_storage_object($response) {
+    $code = generate_random_hexadecimal_code();
+    save_storage_object($code, $response);
+    return $code;
+}
+
+function get_storage_object_filename($id) {
+    return get_storage_dir() . "/$id";
+}
+
+function load_storage_object($id) {
+    $filename = get_storage_object_filename($id);
+    if(!file_exists($filename)) {
+        return null;
+    }
+    return json_decode(file_get_contents($filename));
+}
+
+function remove_storage_object($id) {
+    @unlink(get_storage_object_filename($id));
+}
+
+function pop_storage_object($id) {
+    if(!validate_storage_id($id)) {
+        return null;
+    }
+    $result = load_storage_object($id);
+    remove_storage_object($id);
+    cleanup_storage();
+    return $result;
+}
+
+function cleanup_storage() {
+    @rmdir(get_storage_dir());
+}
+
+function expire_storage_objects($time) {
+    foreach(glob(get_storage_dir() . '/*') as $token_file) {
+        if((time() - filectime($token_file)) > $time) {
+            @unlink($token_file);
+        }
+    }
+}
+
+function clear_expired_objects() {
+    expire_storage_objects(10);
+}
+
+function throw_client_error($message) {
+    http_response_code(400);
+    header("Content-Type: text/plain");
+    echo $message;
+    die;
+}
+
 function ldap_login($hostname, $dn, $uid,  $username, $password) {
     $ldap = ldap_connect($hostname);
     ldap_set_option($ldap, LDAP_OPT_PROTOCOL_VERSION, 3);
@@ -69,6 +104,25 @@ function ldap_login($hostname, $dn, $uid,  $username, $password) {
     return $entries;
 }
 
+function validate_storage_id($code) {
+    return @hex2bin($code) != null and strlen($code) == 64;
+}
+
+function write_json_response($data) {
+    header("Context-Type: application/json");
+    echo json_encode($data);
+}
+
+function require_http_authentication() {
+    header('WWW-Authenticate: Basic');
+    header('HTTP/1.0 401 Unauthorized');
+    header('Content-Type: text/plain');
+    echo 'HTTP/1.0 401 Unauthorized';
+}
+
+function redirect_to($url) {
+    header("Location: $url");
+}
 
 function config() {
     $inifile = parse_ini_file('config.ini', true);
@@ -98,57 +152,24 @@ if($_SERVER['REQUEST_METHOD'] == 'POST') {
     $client = $config['clients'][$_POST['client_id']];
     
     if(!$client or $client['client_secret'] != $_POST['client_secret'] ) {
-        
-        http_response_code(400);
-        header("Content-Type: text/plain");
-        echo "Invalid 'client_id' or 'client_secret'";
-        exit;
-    
+        throw_client_error("Invalid 'client_id' or 'client_secret'");
     }
     
-    foreach(glob(get_token_storage_dir() . '/*') as $token) {
-        if((time() - filectime($token)) > 60) {
-            unlink($token);
-        }
-    
+    clear_expired_objects();
+    if(($response = pop_storage_object($_POST['code'])) != null) {
+        write_json_response($response);
+    } else {
+        throw_client_error("Invalid code");
     }
-    
-    
-    $code = $_POST['code'];
-    
-    if(!@hex2bin($code)) {
-        return;
-    }
-    
-    $filename = get_token_storage_dir() . "/$code.json";
-    
-    if(!file_exists($filename)) {
-        return;
-    }
-    
-    $result = file_get_contents($filename);
-    unlink($filename);
-    
-    @rmdir(get_token_storage_dir());
-    
-    header("Context-Type: application/json");
-    echo $result;
 } else {
     $config = config();
 
     $client = $config['clients'][$_GET['client_id']];
     
     if(!$client or preg_match($client['redirect_uri'] , $_GET['redirect_uri'])) {
-        http_response_code(400);
-        header("Content-Type: text/plain");
-        echo "Invalid 'client_id' or 'redirect_uri'";
-        exit;
+        throw_client_error("Invalid 'client_id' or 'redirect_uri'");
     }
     
-    function generate_code() {
-        return bin2hex(openssl_random_pseudo_bytes(24));
-    }
-
     function ldap_login_configured($username, $password) {
         
         $config = config();
@@ -167,9 +188,7 @@ if($_SERVER['REQUEST_METHOD'] == 'POST') {
             return false;
         }
         
-        $token = generate_code();
-        
-        $json = oidc_generate_token_response(
+        $response = oidc_generate_token_response(
             $token,
             array(
                 "sub" => $entries[0]['uid'][0],
@@ -177,23 +196,16 @@ if($_SERVER['REQUEST_METHOD'] == 'POST') {
                 "email" => $entries[0]['mail'][0]
             )
         );
-    
-        @mkdir(get_token_storage_dir());
         
-        file_put_contents(get_token_storage_dir()  .  "/$token.json", $json);
-        
-        return $token;
+        return create_storage_object($response);
     }
     
     
     if($code = login($_SERVER['PHP_AUTH_USER'], $_SERVER['PHP_AUTH_PW'])) {
         $config = config();
     
-        header('location: '. $_GET['redirect_uri']. '?state=' . $_GET['state'] . '&code='.  $code);
+        redirect_to($_GET['redirect_uri']. '?state=' . $_GET['state'] . '&code='.  $code);
     } else {
-        header('WWW-Authenticate: Basic realm=c9users');
-        header('HTTP/1.0 401 Unauthorized');
-        header('Content-Type: text/plain');
-        echo 'HTTP/1.0 401 Unauthorized';
+        require_http_authentication();
     }
 }
