@@ -1,11 +1,11 @@
 <?php
 
-function generate_random_hexadecimal_code() {
+function generate_secret_code() {
     return bin2hex(openssl_random_pseudo_bytes(32));
 }
 
 function jwt_base64_encode($data) {
-    return str_replace(array('+', '/', '='), array('-', '_', ''), base64_encode($data));
+    return str_replace(array('+', '/', '='), array('-', '_', ''), @base64_encode($data));
 }
 
 function jwt_json_encode($data) {
@@ -37,12 +37,6 @@ function save_storage_object($code, $response) {
     file_put_contents(get_storage_dir()  .  "/$code", json_encode($response));
 }
 
-function create_storage_object($response) {
-    $code = generate_random_hexadecimal_code();
-    save_storage_object($code, $response);
-    return $code;
-}
-
 function get_storage_object_filename($id) {
     return get_storage_dir() . "/$id";
 }
@@ -60,9 +54,6 @@ function remove_storage_object($id) {
 }
 
 function pop_storage_object($id) {
-    if(!validate_storage_id($id)) {
-        return null;
-    }
     $result = load_storage_object($id);
     remove_storage_object($id);
     cleanup_storage();
@@ -104,10 +95,18 @@ function ldap_login($hostname, $dn, $uid,  $username, $password) {
     }
     $result = ldap_read($ldap, "$uid=$username,$dn", "($uid=$username)");
     $entries = ldap_get_entries($ldap, $result);
-    return $entries;
+    return $entries[0];
 }
 
-function validate_storage_id($code) {
+function ldap_map_attributes($attributes, $mapping) {
+    $result = array();
+    foreach($mapping as $source => $dest) {
+        $result[$dest] = $attributes[$source][0];
+    }
+    return $result;
+}
+
+function validate_secret_code($code) {
     return @hex2bin($code) != null and strlen($code) == 64;
 }
 
@@ -149,50 +148,86 @@ function config() {
     return (object) $inifile;
 }
 
-function main() {
-    $config = config();
-    if(request_method_is_post()) {
+function openid_signin_ok($redirect_uri, $code, $state) {
+    redirect_to(add_url_query_string($redirect_uri, array('state' => $state, 'code' => $code)));
+}
 
-        if($_POST['client_id'] != $config->client->client_id and $_POST['client_secret'] != $config->client->client_secret) {
-            throw_client_error("Invalid 'client_id' or 'client_secret'");
-        }
-        
-        clear_expired_objects();
-        
-        if(($response = pop_storage_object($_POST['code'])) != null) {
-            write_json_response($response);
-        } else {
-            throw_client_error("Invalid code");
-        }
+function process_authentication_page($redirect_uri, $client_id, $state, $auth_user, $auth_pw) {
+    $config = config();
+    
+    if($config->client->client_id != $client_id or preg_match($config->client->valid_redirect_uri, $redirect_uri)) {
+        throw_client_error("Invalid 'client_id' or 'redirect_uri'");
+    }
+    
+    $ldap_user = ldap_login(
+        $config->server->hostname,
+        $config->server->dn,
+        $config->server->sub,
+        $auth_user,
+        $auth_pw
+    );
+    
+    if(!$ldap_user) {
+        require_http_authentication();
+    }
+
+    $secret_code = generate_secret_code();
+
+    $response = oidc_generate_token_response(
+        $secret_code,
+        ldap_map_attributes($ldap_user, array(
+            $config->server->sub => 'sub',
+            $config->server->name => 'name',
+            $config->server->email => 'email'
+        ))
+    );
+
+    save_storage_object($secret_code, $response);
+
+    openid_signin_ok($redirect_uri, $secret_code, $state);
+}
+
+
+function process_token_page($client_id, $client_secret, $grant_type, $code) {
+    $config = config();
+
+    if(!validate_secret_code($code)) {
+        throw_client_error("Invalid code");
+    }
+    
+    if($grant_type != 'authorization_code') {
+        throw_client_error("Invalid 'grant_type'");
+    }
+
+    if($client_id != $config->client->client_id and $client_secret != $config->client->client_secret) {
+        throw_client_error("Invalid 'client_id' or 'client_secret'");
+    }
+
+    clear_expired_objects();
+    
+    if(($response = pop_storage_object($code)) != null) {
+        write_json_response($response);
     } else {
-        if($_GET['client_id'] != $config->client->client_id or preg_match($config->client->redirect_uri, $_GET['redirect_uri'])) {
-            throw_client_error("Invalid 'client_id' or 'redirect_uri'");
-        }
-        
-        $ldap_user = ldap_login(
-            $config->server->hostname,
-            $config->server->dn,
-            $config->server->sub,
+        throw_client_error("Invalid code");
+    }
+}
+
+function main() {
+    if(request_method_is_post()) {
+        process_token_page(
+            $_POST['client_id'],
+            $_POST['client_secret'],
+            $_POST['grant_type'],
+            $_POST['code']
+        );
+    } else {
+        process_authentication_page(
+            $_GET['redirect_uri'],
+            $_GET['client_id'],
+            $_GET['state'],
             $_SERVER['PHP_AUTH_USER'],
             $_SERVER['PHP_AUTH_PW']
         );
-        
-        if(!$ldap_user) {
-            require_http_authentication();
-        }
-        
-        $response = oidc_generate_token_response(
-            $token,
-            array(
-                "sub" => $ldap_user[0][$config->server->sub][0],
-                "name" => $ldap_user[0][$config->server->name][0],
-                "email" => $ldap_user[0][$config->server->email][0]
-            )
-        );
-
-        $code = create_storage_object($response);
-
-        redirect_to(add_url_query_string($_GET['redirect_uri'], array('state' => $_GET['state'], 'code' => $code)));
     }
 }
 
