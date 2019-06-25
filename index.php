@@ -272,9 +272,6 @@ function main() {
     } else if(request_path() == '/.well-known/openid-configuration' and request_method() == 'get') {
         process_discovery_page(get_request_base_url());
     } else {
-        
-        var_dump(request_path()); exit;
-        
         throw_not_found();
     }
 }
